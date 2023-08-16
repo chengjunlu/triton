@@ -4,14 +4,16 @@
 include "mlir/IR/AttrTypeBase.td"
 include "triton/Dialect/TritonGPU/IR/TritonGPUDialect.td"
 include "triton/Dialect/Triton/IR/TritonInterfaces.td"
+include "triton/Dialect/TritonGPU/IR/TritonGPUInterfaces.td"
 
 //===----------------------------------------------------------------------===//
 // TritonGPU Attribute Definitions
 //===----------------------------------------------------------------------===//
 
 class TritonGPU_Attr<string name, list<Trait> traits = [],
+                     Dialect dialect = TritonGPU_Dialect,
                      string baseCppClass = "::mlir::Attribute">
-  : AttrDef<TritonGPU_Dialect, name, traits, baseCppClass> {
+  : AttrDef<dialect, name, traits, baseCppClass> {
 
   let description = [{
 TritonGPU Tensors differ from usual tensors in that they contain a _layout_ attribute which determines
@@ -253,7 +255,8 @@ compared to 1*64 when the hasLeadingOffset is false.
 // Distributed Layout Encoding
 //===----------------------------------------------------------------------===//
 
-class DistributedEncoding<string name> : TritonGPU_Attr<name> {
+class DistributedEncoding<string name, list<Trait> traits = [],
+                     Dialect dialect = TritonGPU_Dialect> : TritonGPU_Attr<name, !listconcat([TritonGPUDistributedLayout], traits), dialect> {
   let description = [{
 Distributed encodings have a layout function that is entirely characterized
 by a d-dimensional tensor L. Note that L doesn't need to have the same shape
@@ -277,7 +280,12 @@ L(A) = [ {0,8} , {1,9} , {2,10}, {3,11}, {0,8} , {1, 9} , {2, 10}, {3, 11},
          {4,12}, {5,13}, {6,14}, {7,15}, {4,12}, {5, 13}, {6, 14}, {7, 15} ]
   }];
 
-  let extraClassDeclaration = extraBaseClassDeclaration;
+  code extraDistributedDeclaration  = extraBaseClassDeclaration # [{
+    unsigned getNumCTAs() const;
+    SmallVector<unsigned> getCTASplitNum() const;
+    SmallVector<unsigned> getCTAOrder() const;
+    SmallVector<unsigned> getCTAsPerCGA() const;
+  }];
 }
 
 //===----------------------------------------------------------------------===//
@@ -369,8 +377,8 @@ for
 
   let parameters = (
     ins
-    ArrayRefParameter<"unsigned">:$sizePerThread,
-    ArrayRefParameter<"unsigned">:$threadsPerWarp,
+    ArrayRefParameter<"unsigned">:$sizePerThread__,
+    ArrayRefParameter<"unsigned">:$threadsPerWarp__,
     ArrayRefParameter<"unsigned">:$warpsPerCTA,
     ArrayRefParameter<"unsigned">:$order, // the fastest-changing axis first
     "CTALayoutAttr":$CTALayout
@@ -442,8 +450,11 @@ for
     }]>
   ];
 
-  let extraClassDeclaration = extraBaseClassDeclaration # [{
+  let extraClassDeclaration = extraDistributedDeclaration # [{
     SliceEncodingAttr squeeze(int axis);
+    SmallVector<unsigned> getSizePerThread() const;
+    SmallVector<unsigned> getThreadsPerWarp() const;
+    SmallVector<unsigned> getShapePerCTATile(ArrayRef<int64_t> tensorShape = ArrayRef<int64_t>()) const;
   }];
 
   let hasCustomAssemblyFormat = 1;
@@ -454,7 +465,7 @@ for
 //===----------------------------------------------------------------------===//
 // TODO: MMAv1 and MMAv2 should be two instances of the same class
 
-def MmaEncodingAttr : DistributedEncoding<"MmaEncoding"> {
+def MmaEncodingAttr : DistributedEncoding<"MmaEncoding", [TritonGPUMMAAttrInterface]> {
   let mnemonic = "mma";
 
   let description = [{
@@ -610,7 +621,7 @@ For example, the matrix L corresponding to blockTileSize=[32,16] is:
     }]>
   ];
 
-  let extraClassDeclaration = extraBaseClassDeclaration # [{
+  let extraClassDeclaration = extraDistributedDeclaration # [{
     bool isVolta() const;
     bool isTuring() const;
     bool isAmpere() const;
@@ -618,12 +629,30 @@ For example, the matrix L corresponding to blockTileSize=[32,16] is:
 
     unsigned getElemsPerThreadOfOperand(int opIdx, ArrayRef<int64_t> shape) const;
 
+    SmallVector<unsigned> getSizePerThread() const;
+    SmallVector<unsigned> getShapePerCTATile(ArrayRef<int64_t> tensorShape = ArrayRef<int64_t>()) const;
+
+    SmallVector<unsigned> getShapePerCTATileForDotOperands(ArrayRef<int64_t> shape, int opIdx) const;
+    unsigned getTotalElemsPerThreadForOperands(ArrayRef<int64_t> shape, Type eltTy, int opIdx) const;
+
     // Get [isARow, isBRow, isAVec4, isBVec4, id] from versionMinor
     std::tuple<bool, bool, bool, bool, int> decodeVoltaLayoutStates() const;
 
     // Number of bits in versionMinor to hold the ID of the MMA encoding instance.
     // Here 5 bits can hold 32 IDs in a single module.
     static constexpr int numBitsToHoldMmaV1ID{5};
+
+    bool getMMAv1IsRow(int opIdx) const;
+    bool getMMAv1IsVec4(int opIdx) const;
+    int getMMAv1NumOuter(ArrayRef<int64_t> shape, int opIdx) const;
+    SmallVector<int> getMMAv1Rep(int opIdx) const;
+    SmallVector<int> getMMAv1ShapePerWarp(int opIdx) const;
+    int getMMAv1Vec(int opIdx) const;
+    //
+    SmallVector<int64_t> getMMAv2Rep(ArrayRef<int64_t> shape,
+                                     int bitwidth, int opIdx) const;
+    SmallVector<unsigned> getThreadsPerWarp() const;
+    SmallVector<unsigned> getSizePerThreadForOperands(unsigned opIdx) const;
   }];
 
   let hasCustomAssemblyFormat = 1;
@@ -657,9 +686,13 @@ def SliceEncodingAttr : DistributedEncoding<"SliceEncoding"> {
     "Attribute":$parent
   );
 
-  let extraClassDeclaration = extraBaseClassDeclaration # [{
+  let extraClassDeclaration = extraDistributedDeclaration # [{
     template<class T>
     SmallVector<T> paddedShape(ArrayRef<T> shape) const;
+    SmallVector<unsigned> getSizePerThread() const;
+    SmallVector<unsigned> getThreadsPerWarp() const;
+    Attribute getCTALayout() const;
+    SmallVector<unsigned> getShapePerCTATile(ArrayRef<int64_t> tensorShape = ArrayRef<int64_t>()) const;
   }];
 
   let hasCustomAssemblyFormat = 1;
@@ -701,17 +734,11 @@ section 9.7.13.4.1 for more details.
   ];
 
   let hasCustomAssemblyFormat = 1;
-  let extraClassDeclaration = extraBaseClassDeclaration # [{
-    bool getMMAv1IsRow() const;
-    bool getMMAv1IsVec4() const;
-    SmallVector<int> getMMAv1Rep() const;
-    SmallVector<int> getMMAv1ShapePerWarp() const;
-    int getMMAv1Vec() const;
-    int getMMAv1NumOuter(ArrayRef<int64_t> shape) const;
-    //
-    SmallVector<int64_t> getMMAv2Rep(ArrayRef<int64_t> shape,
-                                     int bitwidth) const;
-
+  let extraClassDeclaration = extraDistributedDeclaration # [{
+    Attribute getCTALayout() const;
+    SmallVector<unsigned> getSizePerThread() const;
+    SmallVector<unsigned> getThreadsPerWarp() const;
+    SmallVector<unsigned> getShapePerCTATile(ArrayRef<int64_t> tensorShape = ArrayRef<int64_t>()) const;
   }];
 }
 

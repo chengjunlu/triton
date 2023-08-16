@@ -1,5 +1,6 @@
 import itertools
 
+import intel_extension_for_pytorch
 import pytest
 import torch
 
@@ -110,13 +111,13 @@ def f8_to_f16(x, dtype):
 )
 def test_op(BLOCK_M, BLOCK_N, BLOCK_K, SPLIT_K, NWARP, NSTAGE, M, N, K, AT, BT, ADTYPE, BDTYPE, ALLOW_TF32,
             F8_FASTACCUM):
-    capability = torch.cuda.get_device_capability()
-    if capability[0] < 7:
-        pytest.skip("Only test tl.dot() on devices with sm >= 70")
-    if capability[0] < 8 and (ADTYPE == "bfloat16" or BDTYPE == "bfloat16"):
-        pytest.skip("Only test bfloat16 on devices with sm >= 80")
-    if capability[0] < 9 and (ADTYPE == "float8e4nv" or BDTYPE == "float8e4nv"):
-        pytest.skip("Only test float8e4nv on devices with sm >= 90")
+    # capability = torch.cuda.get_device_capability()
+    # if capability[0] < 7:
+    #     pytest.skip("Only test tl.dot() on devices with sm >= 70")
+    # if capability[0] < 8 and (ADTYPE == "bfloat16" or BDTYPE == "bfloat16"):
+    #     pytest.skip("Only test bfloat16 on devices with sm >= 80")
+    # if capability[0] < 9 and (ADTYPE == "float8e4nv" or BDTYPE == "float8e4nv"):
+    #     pytest.skip("Only test float8e4nv on devices with sm >= 90")
     if (ADTYPE == "bfloat16" or BDTYPE == "bfloat16") and SPLIT_K != 1:
         pytest.skip("bfloat16 matmuls don't allow split_k for now")
     torch.manual_seed(0)
@@ -141,14 +142,14 @@ def test_op(BLOCK_M, BLOCK_N, BLOCK_K, SPLIT_K, NWARP, NSTAGE, M, N, K, AT, BT, 
     def init_input(m, n, dtype):
         if 'float8' in dtype:
             ewidth = {'float8e4b15': 4, 'float8e4nv': 4, 'float8e5': 5}[dtype]
-            sign = torch.randint(2, size=(m, n), device="cuda", dtype=torch.int8) * 128
-            val = torch.randint(2**3 - 1, size=(m, n), device="cuda", dtype=torch.int8) << 7 - ewidth
+            sign = torch.randint(2, size=(m, n), device="xpu", dtype=torch.int8) * 128
+            val = torch.randint(2**3 - 1, size=(m, n), device="xpu", dtype=torch.int8) << 7 - ewidth
             return sign | val
         if dtype == "int8":
-            return torch.randint(-128, 127, (m, n), device="cuda", dtype=torch.int8)
+            return torch.randint(-128, 127, (m, n), device="xpu", dtype=torch.int8)
         dtype = {"float16": torch.float16, "bfloat16": torch.bfloat16, "float32": torch.float32}[dtype]
         exponents = torch.randint(-10, 0, size=(m, n))
-        ret = (2.**exponents).to(dtype).to("cuda")
+        ret = (2.**exponents).to(dtype).to("xpu")
         return ret
 
     # allocate/transpose inputs

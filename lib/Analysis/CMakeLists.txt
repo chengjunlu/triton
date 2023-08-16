@@ -7,6 +7,7 @@ add_mlir_library(TritonAnalysis
 
   DEPENDS
   TritonTableGen
+  TritonGPUInterfaceDefsIncGen
   TritonGPUAttrDefsIncGen
 
   LINK_LIBS PUBLIC

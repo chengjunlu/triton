@@ -209,10 +209,11 @@ bool ReduceOpHelper::isSupportedLayout() {
   if (srcLayout.isa<triton::gpu::BlockedEncodingAttr>()) {
     return true;
   }
-  if (auto mmaLayout = srcLayout.dyn_cast<triton::gpu::MmaEncodingAttr>()) {
-    if (mmaLayout.isAmpere() || mmaLayout.isHopper()) {
+  if (auto mmaLayout = srcLayout.dyn_cast<triton::gpu::TritonGPUMMAAttrInterface>()) {
+    //TODO: here
+//    if (mmaLayout.isAmpere() || mmaLayout.isHopper()) {
       return true;
-    }
+//    }
   }
   if (auto sliceLayout = srcLayout.dyn_cast<triton::gpu::SliceEncodingAttr>()) {
     return true;

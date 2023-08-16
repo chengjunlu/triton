@@ -148,9 +148,9 @@ struct TritonExpandDimsPattern
     auto retShape = argType.getShape().vec();
     retShape.insert(retShape.begin() + op.getAxis(), 1);
     // return encoding
-    auto retSizePerThread = argEncoding.getSizePerThread().vec();
+    auto retSizePerThread = argEncoding.getSizePerThread();
     retSizePerThread.insert(retSizePerThread.begin() + op.getAxis(), 1);
-    auto retThreadsPerWarp = argEncoding.getThreadsPerWarp().vec();
+    auto retThreadsPerWarp = argEncoding.getThreadsPerWarp();
     retThreadsPerWarp.insert(retThreadsPerWarp.begin() + op.getAxis(), 1);
     auto retWarpsPerCTA = argEncoding.getWarpsPerCTA().vec();
     retWarpsPerCTA.insert(retWarpsPerCTA.begin() + op.getAxis(), 1);
@@ -297,7 +297,7 @@ struct TritonCatPattern : public OpConversionPattern<triton::CatOp> {
     // constraint.
     auto newRetTotalElemsPerThread =
         nextPowOf2(lhsTotalElemsPerThread + rhsTotalElemsPerThread);
-    auto newRetSizePerThread = retSizePerThread.vec();
+    auto newRetSizePerThread = retSizePerThread;
     newRetSizePerThread[retOrder[0]] *=
         newRetTotalElemsPerThread / retTotalElemsPerThread;
     triton::gpu::BlockedEncodingAttr newRetEncoding =
