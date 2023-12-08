@@ -8,13 +8,15 @@ from .._C.libtriton import get_env_vars, ir
 # TODO: runtime.errors
 from ..runtime.autotuner import OutOfResources
 from ..runtime.cache import get_cache_manager
-from ..runtime.driver import driver
+from ..runtime.driver import driver as builtin_driver
 from .utils import InfoFromBackendForTensorMap
 from .backends import make_backend
+from ..common.backend import get_backend
 from dataclasses import dataclass
 from .code_generator import ast_to_ttir
 from pathlib import Path
 import re
+from . import backends
 
 
 @dataclass
@@ -156,14 +158,17 @@ class IRSource:
 
 def compile(src, target=None, options=None):
     if target is None:
-        target = driver.get_current_target()
-    backend = make_backend(target)
-    # create backend
+        # if no target specified, use the builtin driver as the default backend.
+        target = builtin_driver.get_current_target()
+    # backend = make_backend(target)
+    assert isinstance(target, tuple)
+    backend_type = target[0]
+    backend = get_backend(backend_type)
     if not isinstance(src, ASTSource):
         assert isinstance(src, str), "source must be either AST or a filepath"
         src = IRSource(src)
     extra_options = src.parse_options()
-    options = backend.parse_options(dict(options or dict(), **extra_options))
+    options = backend.parse_options(dict(options or dict(), **extra_options), target)
     # create cache manager
     key = f"{src.hash()}-{backend.hash()}-{options.hash()}-{str(sorted(get_env_vars().items()))}"
     hash = hashlib.md5(key.encode("utf-8")).hexdigest()
@@ -230,11 +235,14 @@ class CompiledKernel:
             setattr(self, key, val)
         # stores the text of each level of IR that was generated during compilation
         asm_files = [Path(p) for c, p in metadata_group.items() if not c.endswith(".json")]
+        backend_type = self.target[0]
+        backend = get_backend(backend_type)
+        self.driver = backend.get_driver()
         self.asm = {
-            file.suffix[1:]: file.read_bytes() if file.suffix[1:] == driver.binary_ext else file.read_text()
+            file.suffix[1:]: file.read_bytes() if file.suffix[1:] == self.driver.binary_ext else file.read_text()
             for file in asm_files
         }
-        self.kernel = self.asm[driver.binary_ext]
+        self.kernel = self.asm[self.driver.binary_ext]
         # binaries are lazily initialized
         # because it involves doing runtime things
         # (e.g., checking amount of shared memory on current device)
@@ -244,13 +252,13 @@ class CompiledKernel:
     def _init_handles(self):
         if self.module is not None:
             return
-        device = driver.get_current_device()
+        device = self.driver.get_current_device()
         # not enough shared memory to run the kernel
-        max_shared = driver.utils.get_device_properties(device)["max_shared_mem"]
+        max_shared = self.driver.get_device_properties(device)["max_shared_mem"]
         if self.shared > max_shared:
             raise OutOfResources(self.shared, max_shared, "shared memory")
         # TODO: n_regs, n_spills should be metadata generated when calling `ptxas`
-        self.module, self.function, self.n_regs, self.n_spills = driver.utils.load_binary(
+        self.module, self.function, self.n_regs, self.n_spills = self.driver.load_binary(
             self.name, self.kernel, self.shared, device)
 
     def __getattribute__(self, name):
@@ -262,10 +270,10 @@ class CompiledKernel:
         self._init_handles()
 
         def runner(*args, stream=None):
-            args_expand = driver.assemble_tensormap_to_arg(self.tensormaps_info, args)
+            args_expand = self.driver.assemble_tensormap_to_arg(self.tensormaps_info, args)
             if stream is None:
-                device = driver.get_current_device()
-                stream = driver.get_current_stream(device)
+                device = self.driver.get_current_device()
+                stream = self.driver.get_current_stream(device)
             self.run(grid[0], grid[1], grid[2], self.num_warps, self.num_ctas, self.cluster_dims[0],
                      self.cluster_dims[1], self.cluster_dims[2], self.shared, stream, self.function,
                      CompiledKernel.launch_enter_hook, CompiledKernel.launch_exit_hook, self, *args_expand)

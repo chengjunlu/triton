@@ -1,4 +1,4 @@
-from triton.common.backend import BaseBackend
+from triton.common.backend import BaseBackend, register_backend
 from dataclasses import dataclass
 from ...common.backend import get_cuda_version_key, path_to_ptxas
 from ..._C.libtriton import ir, passes, nvidia, llvm
@@ -14,6 +14,7 @@ import os
 import subprocess
 from pathlib import Path
 
+from ...runtime.driver import driver as builtin_driver
 
 @functools.lru_cache()
 def ptx_get_version(cuda_version) -> int:
@@ -46,6 +47,7 @@ class CUDAOptions:
     max_num_imprecise_acc_default: bool = None
     extern_libs: dict = None
     debug: bool = False
+    capability: int = 80
 
     def __post_init__(self):
         default_libdir = Path(__file__).parent.parent.parent / 'third_party' / 'cuda' / 'lib'
@@ -63,15 +65,18 @@ class CUDAOptions:
 
 class CUDABackend(BaseBackend):
 
-    def __init__(self, device_type: tuple) -> None:
+    def __init__(self, device_type: str) -> None:
         super().__init__(device_type)
-        self.capability = device_type[1]
-        assert isinstance(self.capability, int)
+        # self.capability = device_type[1]
+        # assert isinstance(self.capability, int)
 
-    def parse_options(self, opts) -> Any:
+    def parse_options(self, opts, target) -> Any:
         args = {k: opts[k] for k in CUDAOptions.__dataclass_fields__.keys() if k in opts}
-        args["allow_fp8e4nv"] = self.capability >= 89
-        args["max_num_imprecise_acc_default"] = 2**30 if self.capability == 90 else 0
+        capability = target[1]
+        assert isinstance(capability, int)
+        args["allow_fp8e4nv"] = capability >= 89
+        args["max_num_imprecise_acc_default"] = 2**30 if capability == 90 else 0
+        args["capability"] = capability
         return CUDAOptions(**args)
 
     @staticmethod
@@ -263,13 +268,16 @@ class CUDABackend(BaseBackend):
 
     def add_stages(self, stages, options):
         stages["ttir"] = lambda src, metadata: self.make_ttir(src, metadata, options)
-        stages["ttgir"] = lambda src, metadata: self.make_ttgir(src, metadata, options, self.capability)
-        stages["llir"] = lambda src, metadata: self.make_llir(src, metadata, options, self.capability)
-        stages["ptx"] = lambda src, metadata: self.make_ptx(src, metadata, options, self.capability)
-        stages["cubin"] = lambda src, metadata: self.make_cubin(src, metadata, options, self.capability)
+        stages["ttgir"] = lambda src, metadata: self.make_ttgir(src, metadata, options, options.capability)
+        stages["llir"] = lambda src, metadata: self.make_llir(src, metadata, options, options.capability)
+        stages["ptx"] = lambda src, metadata: self.make_ptx(src, metadata, options, options.capability)
+        stages["cubin"] = lambda src, metadata: self.make_cubin(src, metadata, options, options.capability)
 
     def hash(self):
-        return f'{get_cuda_version_key()}-{self.capability}'
+        return self.get_version_key()
+
+    def get_version_key(self):
+        return f'{get_cuda_version_key()}'
 
     def make_launcher_stub(self, src, metadata):
         ids = {
@@ -286,3 +294,9 @@ class CUDABackend(BaseBackend):
     @classmethod
     def create_backend(cls, device_type: str):
         return cls(device_type)
+
+    def get_driver(self):
+        return builtin_driver
+
+
+register_backend("cuda", CUDABackend)
