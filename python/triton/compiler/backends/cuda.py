@@ -1,4 +1,4 @@
-from triton.common.backend import BaseBackend
+from triton.common.backend import BaseBackend, register_backend
 from dataclasses import dataclass
 from ..._C.libtriton.triton import ClusterInfo, get_num_warps, TMAInfos, translate_triton_gpu_to_llvmir, get_shared_memory_size, translate_llvmir_to_ptx, compile_ptx_to_cubin, add_external_libs
 from ...common.backend import get_cuda_version_key, path_to_ptxas
@@ -218,3 +218,6 @@ class CUDABackend(BaseBackend):
     @classmethod
     def create_backend(cls, device_type: str):
         return cls(device_type)
+
+
+register_backend(("cuda", 80), CUDABackend)
