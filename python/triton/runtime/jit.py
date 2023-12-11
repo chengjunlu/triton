@@ -358,7 +358,8 @@ class JITFunction(KernelInterface[T]):
             if is_cpu and is_pinned_memory:
                 return "cuda"
 
-            return device_types[0] if len(device_types) > 0 else "cuda"
+            return "cuda"
+            # return device_types[0] if len(device_types) > 0 else "cuda"
 
         # deduce the backend type from the input tensor.
         device_type = conclude_device_type(*args, **kwargs)

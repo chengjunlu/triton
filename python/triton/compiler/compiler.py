@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from .code_generator import ast_to_ttir
 from pathlib import Path
 import re
+from . import backends
 
 
 @dataclass
